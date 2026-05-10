@@ -333,7 +333,7 @@ private:
 #ifdef USERMOD_AUDIOREACTIVE
     um_data_t* um_data = nullptr;
     if (UsermodManager::getUMData(&um_data, USERMOD_ID_AUDIOREACTIVE)) {
-      uint8_t* src = (uint8_t*) um_data->u_data[0]; // fftResult[16]
+      uint8_t* src = (uint8_t*) um_data->u_data[2]; // fftResult[16] — index 2 per AudioReactive export table
       if (src) memcpy(fftBands, src, 16);
     }
 #endif
