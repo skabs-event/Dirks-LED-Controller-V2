@@ -1,0 +1,10 @@
+{
+  "name": "StairController",
+  "version": "2.0.0",
+  "description": "Dirk's LED Controller V2 — PIR-triggered stair lighting + VU-Meter disco mode. RGBW (WS2814 FCOB), 18 steps, 2 PIR sensors, AudioReactive integration.",
+  "keywords": ["staircase", "rgbw", "pir", "vumeter", "audioreactive"],
+  "authors": [{ "name": "Dirk", "url": "" }],
+  "license": "MIT",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}
