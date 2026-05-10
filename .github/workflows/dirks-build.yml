@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Aircoookie/WLED
-          ref: v0.15.0-b4          # pin to a stable release
+          ref: v0.15.4              # latest stable release
           path: wled
           submodules: recursive
 
