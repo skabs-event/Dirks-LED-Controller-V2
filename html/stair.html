@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dirk's LED Controller V2 — Treppen-Steuerung</title>
+  <style>
+    :root {
+      --bg: #11131a;
+      --panel: #1b1f2a;
+      --panel2: #242a38;
+      --text: #f3f4f8;
+      --muted: #a8adbd;
+      --accent: #ffb347;
+      --accent2: #7c9eff;
+      --green: #4cda81;
+      --red: #e05568;
+      --border: #353b4d;
+      --off: #222733;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: radial-gradient(circle at top, #202638 0, var(--bg) 45%, #0b0d12 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(15,17,24,0.90);
+      backdrop-filter: blur(12px);
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 14px; flex-wrap: wrap;
+    }
+    .header-left { display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 20px; white-space: nowrap; }
+    .ver { color: var(--muted); font-size: 11px; margin-left: 4px; }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 11px; border-radius: 999px; font-size: 12px;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.11);
+      color: var(--muted); white-space: nowrap;
+    }
+    .status-pill.on { background: rgba(76,218,129,0.14); border-color: rgba(76,218,129,0.38); color: var(--green); }
+    .status-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; }
+    nav { display: flex; gap: 6px; flex-wrap: wrap; }
+    .nav-btn {
+      padding: 7px 14px; border-radius: 999px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--muted); font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .nav-btn:hover { border-color: #596175; color: var(--text); }
+    .nav-btn.active { background: var(--panel2); border-color: var(--accent); color: var(--accent); }
+    .nav-btn .badge { display: inline-block; margin-left: 6px; font-size: 9px; padding: 1px 5px; border-radius: 3px; background: var(--accent2); color: #0b0d12; font-weight: 700; }
+    .view { display: none; padding: 20px; }
+    .view.active { display: block; }
+    button {
+      border: 0; border-radius: 10px; padding: 9px 14px;
+      background: var(--panel2); color: var(--text);
+      font-weight: 700; cursor: pointer; border: 1px solid var(--border);
+      font-size: 13px; transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease;
+    }
+    button:hover { transform: translateY(-1px); border-color: #596175; }
+    button:active { transform: translateY(0); }
+    button.primary { background: linear-gradient(135deg,#ffb347,#ff7f3f); color: #151515; border-color: #ffbd6d; }
+    button.green { background: rgba(76,218,129,0.16); border-color: rgba(76,218,129,0.38); color: var(--green); }
+    button.blue { background: rgba(124,158,255,0.13); border-color: rgba(124,158,255,0.33); color: var(--accent2); }
+    button.danger { background: #372027; border-color: #68404a; color: #e06b7a; }
+    button:disabled { opacity: 0.33; cursor: not-allowed; transform: none !important; }
+    .trigger-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      margin-bottom: 20px; padding: 13px 18px;
+      background: rgba(27,31,42,0.88); border: 1px solid var(--border); border-radius: 14px;
+    }
+    .trigger-label { font-size: 13px; color: var(--muted); flex-shrink: 0; }
+    .trigger-spacer { flex: 1; }
+    .active-info { font-size: 13px; color: var(--muted); }
+    .active-info strong { color: var(--text); }
+    .slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px,1fr)); gap: 14px; }
+    .slot-card {
+      background: rgba(27,31,42,0.92); border: 1px solid var(--border);
+      border-radius: 16px; padding: 16px; position: relative;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .slot-card.is-active { border-color: rgba(76,218,129,0.55); box-shadow: 0 0 20px rgba(76,218,129,0.07); }
+    .slot-card.empty { opacity: 0.55; }
+    .slot-card.disco-type { border-left: 3px solid var(--accent2); }
+    .slot-card.wave-type  { border-left: 3px solid var(--accent); }
+    .slot-number { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 5px; }
+    .slot-type-tag { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 6px; background: rgba(255,255,255,0.06); color: var(--muted); margin-left: 6px; border: 1px solid var(--border); }
+    .slot-type-tag.wave  { color: var(--accent);  border-color: rgba(255,179,71,0.4); }
+    .slot-type-tag.disco { color: var(--accent2); border-color: rgba(124,158,255,0.4); }
+    .slot-name { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
+    .color-bar { height: 18px; border-radius: 6px; margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.07); }
+    .slot-colors-row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .color-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.18); flex-shrink: 0; }
+    .slot-meta { font-size: 12px; color: var(--muted); margin-bottom: 14px; line-height: 1.6; }
+    .slot-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .slot-actions button { font-size: 12px; padding: 6px 12px; }
+    .active-badge { position: absolute; top: 13px; right: 13px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: rgba(76,218,129,0.18); border: 1px solid rgba(76,218,129,0.45); color: var(--green); }
+    .slot-empty-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .save-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      padding: 13px 18px; background: rgba(27,31,42,0.88);
+      border: 1px solid var(--border); border-radius: 14px; margin-bottom: 18px;
+    }
+    .save-bar-label { font-size: 13px; color: var(--muted); flex-shrink: 0; }
+    .save-bar select, .save-bar input[type="text"] {
+      background: var(--panel2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 13px;
+    }
+    .save-bar input[type="text"] { flex: 1; min-width: 160px; }
+    .save-success { color: var(--green); font-size: 13px; font-weight: 700; display: none; }
+    .gen-layout { display: grid; grid-template-columns: 380px minmax(0,1fr); gap: 18px; align-items: start; }
+    .panel { background: rgba(27,31,42,0.94); border: 1px solid var(--border); border-radius: 16px; padding: 16px; box-shadow: 0 20px 50px rgba(0,0,0,0.30); }
+    .panel h2 { font-size: 17px; margin-bottom: 14px; }
+    .ctrl-row { margin-bottom: 14px; }
+    .ctrl-label { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    input[type="number"], select, input[type="color"] { width: 100%; }
+    input[type="number"], select, input[type="text"]:not(.save-bar input):not([class]) {
+      background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; font-size: 14px;
+    }
+    input[type="color"] { height: 42px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 4px; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .gen-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+    .rgbw-block { padding: 10px; background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; margin-bottom: 14px; }
+    .rgbw-title { font-size: 12px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700; }
+    .rgbw-rgb-row { display: grid; grid-template-columns: 60px 1fr; gap: 8px; align-items: center; margin-bottom: 6px; }
+    .rgbw-rgb-row > label { font-size: 11px; color: var(--muted); }
+    .rgbw-w-row { display: grid; grid-template-columns: 60px 1fr 50px; gap: 8px; align-items: center; }
+    .rgbw-w-row > label { font-size: 11px; color: #ffd28a; font-weight: 700; }
+    .rgbw-preview { height: 28px; border-radius: 6px; margin-top: 8px; border: 1px solid rgba(255,255,255,0.10); box-shadow: 0 0 16px rgba(0,0,0,0.4) inset; }
+    .stairs-wrap { overflow: auto; }
+    .stairs-hdr { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .gen-stats { color: var(--muted); font-size: 13px; }
+    #gen-stairs, #disco-stairs {
+      display: flex; flex-direction: column-reverse; gap: 8px;
+      padding: 14px; background: rgba(9,11,17,0.52);
+      border: 1px solid #2a3040; border-radius: 14px; min-width: 580px;
+    }
+    .step-row { display: grid; grid-template-columns: 72px 58px 1fr; align-items: center; gap: 10px; }
+    .step-label { text-align: right; font-size: 12px; color: var(--muted); user-select: none; }
+    .step-cnt { height: 30px; padding: 4px 6px !important; border-radius: 8px !important; text-align: center; font-size: 12px !important; }
+    .pixels { display: grid; gap: 6px; padding: 8px; border-radius: 12px; background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.055); }
+    .pixel { aspect-ratio: 1/1; min-width: 22px; border-radius: 50%; background: var(--off); border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 0 4px rgba(0,0,0,0.85); transition: background 0.045s linear, box-shadow 0.045s linear, transform 0.045s linear; position: relative; }
+    .pixel.extra { outline: 1px dashed rgba(255,255,255,0.12); outline-offset: 2px; }
+    .pixel::after { content: attr(data-led); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.42); font-size: 8px; pointer-events: none; opacity: 0; }
+    .show-numbers .pixel::after { opacity: 1; }
+    .phase-tag { display: inline-block; padding: 4px 9px; border-radius: 999px; background: rgba(255,255,255,0.07); color: #dce4ff; border: 1px solid rgba(255,255,255,0.10); font-size: 12px; }
+    .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin-top: 10px; }
+    .freq-bands { display: grid; gap: 8px; margin-top: 8px; }
+    .freq-band { display: grid; grid-template-columns: 50px 60px 1fr 50px; gap: 8px; align-items: center; padding: 6px; border-radius: 8px; background: rgba(255,255,255,0.03); }
+    .freq-band-label { font-size: 11px; color: var(--muted); }
+    .freq-band-bar { height: 10px; background: rgba(255,255,255,0.05); border-radius: 4px; overflow: hidden; position: relative; }
+    .freq-band-fill { height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent)); width: 0%; transition: width 0.05s linear; }
+    .settings-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(340px,1fr)); gap: 18px; }
+    .settings-note { color: var(--muted); font-size: 13px; line-height: 1.7; margin-top: 10px; }
+    .gpio-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .section-sep { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
+    .info-banner { padding: 10px 12px; background: rgba(124,158,255,0.08); border: 1px solid rgba(124,158,255,0.25); border-radius: 10px; color: #c5d4ff; font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
+    .info-banner strong { color: var(--accent2); }
+    .esp32-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 10px; font-weight: 700; background: rgba(76,218,129,0.13); border: 1px solid rgba(76,218,129,0.35); color: var(--green); margin-left: 8px; }
+    @media (max-width: 1050px) { .gen-layout { grid-template-columns: 1fr; } }
+    @media (max-width: 680px)  { .slot-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <h1>💡 Dirk's LED Controller <span class="ver">V2 · Treppen</span><span class="esp32-badge" id="esp32Badge">●&nbsp;ESP32</span></h1>
+    <span class="status-pill" id="headerPill"><span class="dot"></span> <span id="headerPillText">Kein Programm aktiv</span></span>
+  </div>
+  <nav>
+    <button class="nav-btn active" id="nav-dashboard" onclick="showView('dashboard')">Dashboard</button>
+    <button class="nav-btn"        id="nav-wave"      onclick="showView('wave')">Wellen-Gen.</button>
+    <button class="nav-btn"        id="nav-disco"     onclick="showView('disco')">Disco-Gen. <span class="badge">NEU</span></button>
+    <button class="nav-btn"        id="nav-settings"  onclick="showView('settings')">Hardware</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ════════════ DASHBOARD ════════════ -->
+<div id="view-dashboard" class="view active">
+  <div class="info-banner">
+    💡 <strong>Kombiniert mit WLED:</strong> Diese Oberfläche ist die Treppensteuerung. Allgemeine LED-Effekte, Alexa, MQTT etc. → Haupt-WLED-Oberfläche unter <code>http://[ESP32-IP]/</code>.
+  </div>
+  <div class="trigger-bar">
+    <span class="trigger-label">Bewegungsmelder-Simulation:</span>
+    <button class="primary" onclick="simPIR('unten')">⬇ BM Unten auslösen</button>
+    <button class="primary" onclick="simPIR('oben')">⬆ BM Oben auslösen</button>
+    <button onclick="simAllOff()">⬛ Alles aus</button>
+    <div class="trigger-spacer"></div>
+    <div class="active-info" id="activeInfo">Kein Programm aktiviert</div>
+  </div>
+  <div class="slot-grid" id="slotGrid"></div>
+</div>
+
+<!-- ════════════ WELLEN-GENERATOR ════════════ -->
+<div id="view-wave" class="view">
+  <div class="save-bar">
+    <span class="save-bar-label">Speichern in:</span>
+    <select id="waveSlotSel">
+      <option value="0">Slot 1</option><option value="1">Slot 2</option>
+      <option value="2">Slot 3</option><option value="3">Slot 4</option>
+      <option value="4">Slot 5</option><option value="5">Slot 6</option>
+    </select>
+    <input type="text" id="waveName" placeholder="Programmname..." value="Treppenprogramm 1" />
+    <button class="green" onclick="saveWaveToSlot()">💾 Speichern</button>
+    <button class="blue"  onclick="loadFromSlotDialog('wave')">📂 Slot laden</button>
+    <span class="save-success" id="waveSaveOk">✓ Gespeichert!</span>
+  </div>
+  <div class="gen-layout">
+    <section class="panel" style="overflow-y:auto; max-height:calc(100vh - 145px);">
+      <h2>Wellen-Generator (RGBW)</h2>
+      <div class="ctrl-row"><label class="ctrl-label">Effektmodus</label>
+        <select id="g_mode">
+          <option value="wave">BM-Trigger: Mitte → außen + nach oben</option>
+          <option value="rest">Nur Ruheposition</option>
+          <option value="neutral">Nur Triggerfarbe an</option>
+        </select>
+      </div>
+      <div class="ctrl-row"><label class="ctrl-label">Verdrahtung</label>
+        <select id="g_wiring">
+          <option value="linear">Linear: jede Stufe links → rechts</option>
+          <option value="serpentine">Serpentine: jede zweite Stufe umgedreht</option>
+        </select>
+      </div>
+      <div class="rgbw-block">
+        <div class="rgbw-title">Ruhe-Farbe links · Rosa-Seite</div>
+        <div class="rgbw-rgb-row"><label>RGB</label><input type="color" id="g_leftRgb" value="#ff4fd8" /></div>
+        <div class="rgbw-w-row"><label>W-Anteil</label><input type="range" id="g_leftW" min="0" max="255" value="0" /><span id="v_leftW" style="font-size:11px;color:var(--muted);text-align:right">0</span></div>
+        <div class="rgbw-preview" id="prev_left"></div>
+      </div>
+      <div class="rgbw-block">
+        <div class="rgbw-title">Ruhe-Farbe rechts · Warmweiß-Seite</div>
+        <div class="rgbw-rgb-row"><label>RGB</label><input type="color" id="g_rightRgb" value="#000000" /></div>
+        <div class="rgbw-w-row"><label>W-Anteil</label><input type="range" id="g_rightW" min="0" max="255" value="200" /><span id="v_rightW" style="font-size:11px;color:var(--muted);text-align:right">200</span></div>
+        <div class="rgbw-preview" id="prev_right"></div>
+      </div>
+      <div class="ctrl-row"><label class="ctrl-label">Übergangs-Mittelpunkt <span id="v_split">20 %</span></label><input type="range" id="g_split" min="0" max="100" value="20" step="1" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Übergangsbreite <span id="v_blend">50 %</span></label><input type="range" id="g_blend" min="5" max="100" value="50" step="1" /></div>
+      <div class="rgbw-block">
+        <div class="rgbw-title">Triggerfarbe Neutralweiß</div>
+        <div class="rgbw-rgb-row"><label>RGB</label><input type="color" id="g_neutralRgb" value="#1a1408" /></div>
+        <div class="rgbw-w-row"><label>W-Anteil</label><input type="range" id="g_neutralW" min="0" max="255" value="255" /><span id="v_neutralW" style="font-size:11px;color:var(--muted);text-align:right">255</span></div>
+        <div class="rgbw-preview" id="prev_neutral"></div>
+      </div>
+      <div class="rgbw-block">
+        <div class="rgbw-title">Stufen-Enden · Babyblau</div>
+        <div class="rgbw-rgb-row"><label>RGB</label><input type="color" id="g_edgeRgb" value="#8fd8ff" /></div>
+        <div class="rgbw-w-row"><label>W-Anteil</label><input type="range" id="g_edgeW" min="0" max="255" value="0" /><span id="v_edgeW" style="font-size:11px;color:var(--muted);text-align:right">0</span></div>
+        <div class="rgbw-preview" id="prev_edge"></div>
+      </div>
+      <div class="row2">
+        <div class="ctrl-row"><label class="ctrl-label">Helligkeit <span id="v_bri">190</span></label><input type="range" id="g_bri" min="1" max="255" value="190" /></div>
+        <div class="ctrl-row"><label class="ctrl-label">Ruhehelligkeit <span id="v_restBri">80</span></label><input type="range" id="g_restBri" min="0" max="255" value="80" /></div>
+      </div>
+      <div class="ctrl-row"><label class="ctrl-label">Welle je Stufe <span id="v_stepDelay">160 ms</span></label><input type="range" id="g_stepDelay" min="20" max="500" value="160" step="10" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Auffächern links/rechts <span id="v_sideDelay">260 ms</span></label><input type="range" id="g_sideDelay" min="10" max="500" value="260" step="5" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Einblend-Überblendung <span id="v_fade">1400 ms</span></label><input type="range" id="g_fade" min="40" max="2000" value="1400" step="20" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Haltezeit Triggerfarbe <span id="v_hold">5 s</span></label><input type="range" id="g_hold" min="0" max="60" value="5" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Rückfade Grundtempo <span id="v_retDelay">285 ms</span></label><input type="range" id="g_retDelay" min="20" max="800" value="285" step="5" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Rückfade-Ausdehnung <span><span id="v_retSpread">8</span> Stufen · <span id="v_retFade">2280</span> ms</span></label><input type="range" id="g_retSpread" min="1" max="17" value="8" step="1" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">LED-Nummern anzeigen</label>
+        <select id="g_showNum"><option value="no">Nein</option><option value="yes">Ja</option></select>
+      </div>
+      <div class="gen-btns">
+        <button class="primary" id="g_trigBtn">⚡ Vorschau starten</button>
+        <button id="g_pauseBtn">⏸ Pause</button>
+        <button id="g_restBtn">Ruheposition</button>
+        <button class="danger" id="g_blackBtn">Alles aus</button>
+      </div>
+      <p class="hint">14 Pixel/Stufe ≈ 1m Stufenbreite (WS2814 FCOB, 14 adressierbare Segmente/m).</p>
+    </section>
+    <section class="panel stairs-wrap">
+      <div class="stairs-hdr">
+        <h2>Virtuelle Treppe (RGBW) <span class="phase-tag" id="g_phase">Ruheposition</span></h2>
+        <div class="gen-stats" id="g_stats">LED 0–251</div>
+      </div>
+      <div id="gen-stairs"></div>
+    </section>
+  </div>
+</div>
+
+<!-- ════════════ DISCO-GENERATOR ════════════ -->
+<div id="view-disco" class="view">
+  <div class="save-bar">
+    <span class="save-bar-label">Speichern in:</span>
+    <select id="discoSlotSel">
+      <option value="0">Slot 1</option><option value="1">Slot 2</option>
+      <option value="2">Slot 3</option><option value="3">Slot 4</option>
+      <option value="4">Slot 5</option><option value="5">Slot 6</option>
+    </select>
+    <input type="text" id="discoName" placeholder="Programmname..." value="Disco 1" />
+    <button class="green" onclick="saveDiscoToSlot()">💾 Speichern</button>
+    <button class="blue"  onclick="loadFromSlotDialog('disco')">📂 Slot laden</button>
+    <span class="save-success" id="discoSaveOk">✓ Gespeichert!</span>
+  </div>
+  <div class="gen-layout">
+    <section class="panel" style="overflow-y:auto; max-height:calc(100vh - 145px);">
+      <h2>Disco-Generator (Mikrofon)</h2>
+      <div class="info-banner">
+        🎤 <strong>Eingebautes Mikrofon</strong> (PDM I2S, GPIO 32+15). WLED <code>AudioReactive</code> Usermod liefert 16 FFT-Bänder. Im Browser wird ein Demo-Signal simuliert.
+      </div>
+      <div class="ctrl-row"><label class="ctrl-label">Effekttyp</label>
+        <select id="d_effectType">
+          <option value="vumeter">VU-Meter (Bass unten, Höhen oben)</option>
+          <option value="beat">Beat-Blitz (alle Stufen auf Beat)</option>
+          <option value="frequencyBands">Frequenzbänder → Stufengruppen</option>
+          <option value="colorPulse">Farb-Puls auf Bass</option>
+        </select>
+      </div>
+      <div class="rgbw-block">
+        <div class="rgbw-title">Bass-Farbe</div>
+        <div class="rgbw-rgb-row"><label>RGB</label><input type="color" id="d_bassRgb" value="#ff2233" /></div>
+        <div class="rgbw-w-row"><label>W-Anteil</label><input type="range" id="d_bassW" min="0" max="255" value="0" /><span id="v_d_bassW" style="font-size:11px;color:var(--muted);text-align:right">0</span></div>
+        <div class="rgbw-preview" id="prev_bass"></div>
+      </div>
+      <div class="rgbw-block">
+        <div class="rgbw-title">Mitten-Farbe</div>
+        <div class="rgbw-rgb-row"><label>RGB</label><input type="color" id="d_midRgb" value="#33ff66" /></div>
+        <div class="rgbw-w-row"><label>W-Anteil</label><input type="range" id="d_midW" min="0" max="255" value="0" /><span id="v_d_midW" style="font-size:11px;color:var(--muted);text-align:right">0</span></div>
+        <div class="rgbw-preview" id="prev_mid"></div>
+      </div>
+      <div class="rgbw-block">
+        <div class="rgbw-title">Höhen-Farbe</div>
+        <div class="rgbw-rgb-row"><label>RGB</label><input type="color" id="d_highRgb" value="#3399ff" /></div>
+        <div class="rgbw-w-row"><label>W-Anteil</label><input type="range" id="d_highW" min="0" max="255" value="0" /><span id="v_d_highW" style="font-size:11px;color:var(--muted);text-align:right">0</span></div>
+        <div class="rgbw-preview" id="prev_high"></div>
+      </div>
+      <div class="rgbw-block" id="vuBaseBlock">
+        <div class="rgbw-title">VU-Meter · Grundfarbe (Ruhe)</div>
+        <div class="rgbw-rgb-row"><label>RGB</label><input type="color" id="d_vuBaseRgb" value="#ff3aaa" /></div>
+        <div class="rgbw-w-row"><label>W-Anteil</label><input type="range" id="d_vuBaseW" min="0" max="255" value="0" /><span id="v_d_vuBaseW" style="font-size:11px;color:var(--muted);text-align:right">0</span></div>
+        <div class="rgbw-preview" id="prev_vuBase"></div>
+      </div>
+      <div class="ctrl-row"><label class="ctrl-label">Grundfarbe Dimm-Faktor <span id="v_d_vuBaseDim">15 %</span></label><input type="range" id="d_vuBaseDim" min="1" max="60" value="15" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Mikrofon-Empfindlichkeit <span id="v_d_gain">128</span></label><input type="range" id="d_gain" min="0" max="255" value="128" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Beat-Schwelle <span id="v_d_beatThresh">160</span></label><input type="range" id="d_beatThresh" min="0" max="255" value="160" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Helligkeit <span id="v_d_bri">220</span></label><input type="range" id="d_bri" min="1" max="255" value="220" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Abkling-Geschwindigkeit <span id="v_d_decay">25</span></label><input type="range" id="d_decay" min="1" max="100" value="25" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Idle-Verhalten (kein Sound)</label>
+        <select id="d_idle"><option value="off">Aus</option><option value="dim">Schwaches Glimmen</option><option value="ruhe">Ruheposition aus Wellen-Programm</option></select>
+      </div>
+      <div class="gen-btns">
+        <button class="primary" id="d_demoBtn">🎵 Demo-Beat starten</button>
+        <button id="d_demoStopBtn">⏹ Stop</button>
+        <button id="d_blackBtn" class="danger">Alles aus</button>
+        <button id="d_micBtn" class="blue">🎤 Browser-Mic</button>
+      </div>
+      <p class="hint">Auf dem ESP32 nutzt der Usermod das eingebaute PDM-Mikrofon. Im Browser: "Browser-Mic" für Live-Test.</p>
+    </section>
+    <section class="panel stairs-wrap">
+      <div class="stairs-hdr">
+        <h2>Virtuelle Treppe <span class="phase-tag" id="d_phase">Idle</span></h2>
+        <div class="gen-stats" id="d_stats">16 FFT-Bänder</div>
+      </div>
+      <div class="freq-bands" id="freqBands"></div>
+      <hr class="section-sep" />
+      <div id="disco-stairs"></div>
+    </section>
+  </div>
+</div>
+
+<!-- ════════════ HARDWARE / SETTINGS ════════════ -->
+<div id="view-settings" class="view">
+  <div class="settings-grid">
+    <div class="panel">
+      <h2>Treppen-Geometrie</h2>
+      <p class="settings-note">Geometrie-Einstellungen für den StairController-Usermod. Allgemeine LED-Einstellungen (Pin, Typ) → WLED-Hauptoberfläche.</p>
+      <hr class="section-sep" />
+      <div class="ctrl-row"><label class="ctrl-label">Anzahl Stufen</label><input type="number" id="cfg_steps" value="18" min="1" max="40" /></div>
+      <div class="ctrl-row"><label class="ctrl-label">Standard-Pixel je Stufe</label><input type="number" id="cfg_basePx" value="14" min="1" max="60" /></div>
+      <div class="gpio-row">
+        <div class="ctrl-row"><label class="ctrl-label">GPIO · BM Unten</label><input type="number" id="cfg_gpioUnten" value="12" min="0" max="39" /></div>
+        <div class="ctrl-row"><label class="ctrl-label">GPIO · BM Oben</label><input type="number" id="cfg_gpioOben" value="16" min="0" max="39" /></div>
+      </div>
+      <p class="hint">IO12 + IO16 werden als PIR-Eingänge genutzt (umgewidmete LED-Ausgänge des Gledopto Elite 4D).</p>
+    </div>
+    <div class="panel">
+      <h2>Hardware-Übersicht</h2>
+      <div class="settings-note">
+        <strong>Controller:</strong> Gledopto Elite 4D EXMU 618WL (ESP32)<br>
+        <strong>LED-Stripe:</strong> WS2814 RGBW · 24V · 14 adressierbare Pixel/m<br>
+        <strong>WLED-Konfiguration:</strong>
+        <ul style="margin-left:18px;margin-top:6px;line-height:1.7">
+          <li>LED-Typ: SK6812 RGBW</li>
+          <li>Farbreihenfolge: BRG</li>
+          <li>Swap W↔G: aktiv</li>
+          <li>LED-Datenpin: IO4</li>
+        </ul>
+        <hr class="section-sep" />
+        <strong>Mikrofon:</strong> PDM I2S (GPIO 32+15) · AudioReactive Usermod<br>
+        <strong>PIR Unten:</strong> IO12 · <strong>PIR Oben:</strong> IO16
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Dirk's LED Controller V2</h2>
+      <p class="settings-note">
+        Treppen-Steuerung als WLED-Usermod.<br><br>
+        Diese Oberfläche wird vom <code>StairController</code>-Usermod geliefert (Datei <code>/stair.html</code> auf LittleFS, Endpunkt <code>/stair</code>).<br><br>
+        Programme werden in <code>/stair_presets.json</code> auf LittleFS gespeichert.
+      </p>
+      <hr class="section-sep" />
+      <button class="danger" onclick="if(confirm('Alle 6 Slots wirklich löschen?')) clearAll();">Alle Programme löschen</button>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<script>
+// ════════════════════════════════════════════════════════
+// CONSTANTS
+// ════════════════════════════════════════════════════════
+const NUM_SLOTS = 6;
+const STEPS     = 18;
+const BASE_PX   = 14;
+const DEF_PPX   = 14;
+
+// ════════════════════════════════════════════════════════
+// ESP32 AUTO-DETECT
+// Wenn die Seite auf dem ESP32 läuft: fetch() nutzen.
+// Wenn localhost/127.0.0.1: localStorage als Fallback.
+// ════════════════════════════════════════════════════════
+const IS_ESP32 = !(
+  location.hostname === 'localhost' ||
+  location.hostname === '127.0.0.1' ||
+  location.hostname === ''
+);
+
+// Show/hide ESP32 badge based on mode
+document.addEventListener('DOMContentLoaded', () => {
+  const badge = document.getElementById('esp32Badge');
+  if (badge) {
+    if (IS_ESP32) {
+      badge.style.display = 'inline-flex';
+    } else {
+      badge.textContent   = '● Browser-Demo';
+      badge.style.background = 'rgba(255,179,71,0.13)';
+      badge.style.borderColor = 'rgba(255,179,71,0.35)';
+      badge.style.color   = 'var(--accent)';
+    }
+  }
+});
+
+// ════════════════════════════════════════════════════════
+// API ABSTRACTION
+// ESP32-Modus: fetch('/stair/api/...')
+// Browser-Demo: localStorage
+// ════════════════════════════════════════════════════════
+const API = {
+  async getPresets() {
+    if (IS_ESP32) {
+      const r = await fetch('/stair/api/presets');
+      const j = await r.json();
+      return j.slots || new Array(NUM_SLOTS).fill(null);
+    }
+    const out = [];
+    for (let i = 0; i < NUM_SLOTS; i++) {
+      const raw = localStorage.getItem('stair_slot_' + i);
+      out.push(raw ? JSON.parse(raw) : null);
+    }
+    return out;
+  },
+  async savePreset(slot, data) {
+    if (IS_ESP32) {
+      await fetch('/stair/api/preset?slot=' + slot, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      return;
+    }
+    localStorage.setItem('stair_slot_' + slot, JSON.stringify(data));
+  },
+  async deletePreset(slot) {
+    if (IS_ESP32) {
+      await fetch('/stair/api/preset?slot=' + slot, { method: 'DELETE' });
+      return;
+    }
+    localStorage.removeItem('stair_slot_' + slot);
+    if (await this.getActive() === slot) await this.setActive(null);
+  },
+  async getActive() {
+    if (IS_ESP32) {
+      const r = await fetch('/stair/api/active');
+      const j = await r.json();
+      return j.slot !== undefined ? j.slot : null;
+    }
+    const v = localStorage.getItem('stair_active');
+    return v !== null ? parseInt(v) : null;
+  },
+  async setActive(slot) {
+    if (IS_ESP32) {
+      await fetch('/stair/api/active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slot })
+      });
+      return;
+    }
+    if (slot === null) localStorage.removeItem('stair_active');
+    else localStorage.setItem('stair_active', String(slot));
+  },
+  async clearAll() {
+    if (IS_ESP32) {
+      await fetch('/stair/api/presets', { method: 'DELETE' });
+      return;
+    }
+    for (let i = 0; i < NUM_SLOTS; i++) await this.deletePreset(i);
+    await this.setActive(null);
+  },
+  async triggerPIR(direction) {
+    if (IS_ESP32) {
+      await fetch('/stair/api/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction })
+      });
+    }
+  }
+};
+
+// ════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════
+let gStepCounts = Array.from({ length: STEPS }, () => DEF_PPX);
+let gPixels     = [];
+let gRunning    = false;
+let gPaused     = false;
+let gStartTime  = 0;
+let gPauseOff   = 0;
+let gRafId      = null;
+let gBlackout   = false;
+let dPixels     = [];
+let dRunning    = false;
+let dRafId      = null;
+let dBands      = new Array(16).fill(0);
+let dDemoBeat   = 0;
+let dMicCtx     = null;
+let dMicAnalyzer = null;
+let dVuSmooth   = new Array(STEPS).fill(0);
+
+// ════════════════════════════════════════════════════════
+// COLOUR HELPERS (RGBW)
+// ════════════════════════════════════════════════════════
+function hexToRgb(hex) {
+  const c = hex.replace('#','');
+  return { r: parseInt(c.slice(0,2),16), g: parseInt(c.slice(2,4),16), b: parseInt(c.slice(4,6),16) };
+}
+function rgbToHex(r,g,b) {
+  return '#' + [r,g,b].map(v => Math.round(Math.max(0,Math.min(255,v))).toString(16).padStart(2,'0')).join('');
+}
+function rgbwToVisual(rgbw) {
+  const wScale = rgbw.w / 255;
+  return {
+    r: Math.min(255, rgbw.r + 255 * wScale),
+    g: Math.min(255, rgbw.g + 200 * wScale),
+    b: Math.min(255, rgbw.b + 150 * wScale)
+  };
+}
+function clamp(v,a,b){return Math.min(b,Math.max(a,v));}
+function smoothstep(e0,e1,x){const t=clamp((x-e0)/Math.max(1e-6,e1-e0),0,1);return t*t*(3-2*t);}
+function mixRgbw(a,b,t){return{r:a.r+(b.r-a.r)*t,g:a.g+(b.g-a.g)*t,b:a.b+(b.b-a.b)*t,w:a.w+(b.w-a.w)*t};}
+
+// ════════════════════════════════════════════════════════
+// VIEW MANAGEMENT
+// ════════════════════════════════════════════════════════
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+  if (name === 'dashboard') renderDashboard();
+  if (name === 'wave' && gPixels.length === 0) { buildStairs(); gRest(); }
+  if (name === 'disco' && dPixels.length === 0) { buildDiscoStairs(); buildFreqBands(); }
+}
+
+// ════════════════════════════════════════════════════════
+// DASHBOARD
+// ════════════════════════════════════════════════════════
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+async function renderDashboard() {
+  const slots    = await API.getPresets();
+  const activeIdx = await API.getActive();
+  const grid     = document.getElementById('slotGrid');
+  grid.innerHTML = '';
+  const pill    = document.getElementById('headerPill');
+  const pillTxt = document.getElementById('headerPillText');
+  if (activeIdx !== null && slots[activeIdx]) {
+    pill.className = 'status-pill on';
+    pillTxt.textContent = slots[activeIdx].name;
+    document.getElementById('activeInfo').innerHTML = `Aktiv: <strong>${esc(slots[activeIdx].name)}</strong> (Slot ${activeIdx + 1}, ${slots[activeIdx].type === 'disco' ? 'Disco' : 'Welle'})`;
+  } else {
+    pill.className = 'status-pill';
+    pillTxt.textContent = 'Kein Programm aktiv';
+    document.getElementById('activeInfo').textContent = 'Kein Programm aktiviert';
+  }
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    const slot = slots[i];
+    const isActive = i === activeIdx;
+    const card = document.createElement('div');
+    card.className = 'slot-card' + (slot ? '' : ' empty') + (isActive ? ' is-active' : '') +
+                     (slot ? (slot.type === 'disco' ? ' disco-type' : ' wave-type') : '');
+    if (slot) {
+      if (slot.type === 'disco') {
+        const p = slot.params;
+        const bassV = rgbwToVisual({...hexToRgb(p.bassRgb), w: p.bassW});
+        const midV  = rgbwToVisual({...hexToRgb(p.midRgb),  w: p.midW});
+        const highV = rgbwToVisual({...hexToRgb(p.highRgb), w: p.highW});
+        card.innerHTML = `
+          ${isActive ? '<span class="active-badge">● Aktiv</span>' : ''}
+          <div class="slot-number">Slot ${i+1} <span class="slot-type-tag disco">DISCO</span></div>
+          <div class="slot-name">${esc(slot.name)}</div>
+          <div class="color-bar" style="background:linear-gradient(to right,${rgbToHex(bassV.r,bassV.g,bassV.b)} 0%,${rgbToHex(midV.r,midV.g,midV.b)} 50%,${rgbToHex(highV.r,highV.g,highV.b)} 100%)"></div>
+          <div class="slot-meta">Effekt: <strong>${p.effectType}</strong><br>Empfindlichkeit ${p.gain}/255 · Helligkeit ${p.bri}/255</div>
+          <div class="slot-actions">
+            <button class="${isActive ? '' : 'green'}" onclick="activateSlot(${i})">${isActive ? '✓ Aktiv' : '▶ Aktivieren'}</button>
+            <button class="blue" onclick="editSlot(${i})">✏ Bearbeiten</button>
+            <button class="danger" onclick="askDelete(${i})">✕</button>
+          </div>`;
+      } else {
+        const p = slot.params;
+        const total = p.stepCounts.reduce((s,c)=>s+Math.max(1,c),0);
+        const lV = rgbwToVisual({...hexToRgb(p.leftRgb),    w: p.leftW});
+        const rV = rgbwToVisual({...hexToRgb(p.rightRgb),   w: p.rightW});
+        const nV = rgbwToVisual({...hexToRgb(p.neutralRgb), w: p.neutralW});
+        const eV = rgbwToVisual({...hexToRgb(p.edgeRgb),    w: p.edgeW});
+        card.innerHTML = `
+          ${isActive ? '<span class="active-badge">● Aktiv</span>' : ''}
+          <div class="slot-number">Slot ${i+1} <span class="slot-type-tag wave">WELLE</span></div>
+          <div class="slot-name">${esc(slot.name)}</div>
+          <div class="color-bar" style="background:linear-gradient(to right,${rgbToHex(lV.r,lV.g,lV.b)} 0%,${rgbToHex(rV.r,rV.g,rV.b)} 100%)"></div>
+          <div class="slot-colors-row">
+            <div class="color-dot" style="background:${rgbToHex(nV.r,nV.g,nV.b)}" title="Triggerfarbe"></div>
+            <span style="font-size:11px;color:var(--muted)">Trigger</span>
+            <div class="color-dot" style="background:${rgbToHex(eV.r,eV.g,eV.b)}" title="Babyblau Enden"></div>
+            <span style="font-size:11px;color:var(--muted)">Enden</span>
+          </div>
+          <div class="slot-meta">${STEPS} Stufen · ${total} LEDs<br>Welle · Helligkeit ${p.bri}/255</div>
+          <div class="slot-actions">
+            <button class="${isActive ? '' : 'green'}" onclick="activateSlot(${i})">${isActive ? '✓ Aktiv' : '▶ Aktivieren'}</button>
+            <button class="blue" onclick="editSlot(${i})">✏ Bearbeiten</button>
+            <button class="danger" onclick="askDelete(${i})">✕</button>
+          </div>`;
+      }
+    } else {
+      card.innerHTML = `
+        <div class="slot-number">Slot ${i+1}</div>
+        <div class="slot-name" style="color:var(--muted);font-weight:400">Leer</div>
+        <div class="slot-meta" style="margin:8px 0 14px">Welche Art Programm?</div>
+        <div class="slot-empty-actions">
+          <button class="blue" onclick="newInSlot(${i},'wave')">🌊 Welle</button>
+          <button class="blue" onclick="newInSlot(${i},'disco')">🎵 Disco</button>
+        </div>`;
+    }
+    grid.appendChild(card);
+  }
+}
+
+async function activateSlot(idx) {
+  const slots = await API.getPresets();
+  if (!slots[idx]) return;
+  await API.setActive(idx);
+  renderDashboard();
+}
+async function editSlot(idx) {
+  const slots = await API.getPresets();
+  if (!slots[idx]) return;
+  const slot = slots[idx];
+  if (slot.type === 'disco') {
+    loadParamsIntoDisco(slot.params);
+    document.getElementById('discoSlotSel').value = String(idx);
+    document.getElementById('discoName').value = slot.name;
+    showView('disco');
+  } else {
+    loadParamsIntoWave(slot.params);
+    document.getElementById('waveSlotSel').value = String(idx);
+    document.getElementById('waveName').value = slot.name;
+    showView('wave');
+  }
+}
+function newInSlot(idx, type) {
+  if (type === 'disco') { document.getElementById('discoSlotSel').value = String(idx); document.getElementById('discoName').value = 'Disco ' + (idx+1); showView('disco'); }
+  else { document.getElementById('waveSlotSel').value = String(idx); document.getElementById('waveName').value = 'Programm ' + (idx+1); showView('wave'); }
+}
+async function askDelete(idx) {
+  if (confirm('Slot ' + (idx+1) + ' wirklich löschen?')) { await API.deletePreset(idx); renderDashboard(); }
+}
+async function clearAll() { await API.clearAll(); renderDashboard(); }
+
+// ════════════════════════════════════════════════════════
+// PIR SIMULATION
+// ════════════════════════════════════════════════════════
+async function simPIR(dir) {
+  const activeIdx = await API.getActive();
+  const slots = await API.getPresets();
+  if (activeIdx === null || !slots[activeIdx]) { alert('Bitte zuerst ein Programm aktivieren.'); return; }
+  await API.triggerPIR(dir);
+  const slot = slots[activeIdx];
+  if (slot.type === 'disco') {
+    loadParamsIntoDisco(slot.params); showView('disco'); setTimeout(() => dStartDemo(), 60);
+  } else {
+    loadParamsIntoWave(slot.params); document.getElementById('waveSlotSel').value = String(activeIdx);
+    document.getElementById('waveName').value = slot.name; showView('wave');
+    setTimeout(() => { gStop(); gTrigger(); const ph = document.getElementById('g_phase'); if (ph) ph.textContent = dir === 'oben' ? 'BM Oben → Welle' : 'BM Unten → Welle'; }, 60);
+  }
+}
+async function simAllOff() {
+  showView('wave'); setTimeout(() => { gStop(); gBlack(); }, 60);
+}
+
+// ════════════════════════════════════════════════════════
+// WAVE GENERATOR: SAVE / LOAD
+// ════════════════════════════════════════════════════════
+function getCurrentWaveParams() {
+  return {
+    wiring: document.getElementById('g_wiring').value,
+    leftRgb: document.getElementById('g_leftRgb').value, leftW: +document.getElementById('g_leftW').value,
+    rightRgb: document.getElementById('g_rightRgb').value, rightW: +document.getElementById('g_rightW').value,
+    split: +document.getElementById('g_split').value, blend: +document.getElementById('g_blend').value,
+    neutralRgb: document.getElementById('g_neutralRgb').value, neutralW: +document.getElementById('g_neutralW').value,
+    edgeRgb: document.getElementById('g_edgeRgb').value, edgeW: +document.getElementById('g_edgeW').value,
+    bri: +document.getElementById('g_bri').value, restBri: +document.getElementById('g_restBri').value,
+    stepDelay: +document.getElementById('g_stepDelay').value, sideDelay: +document.getElementById('g_sideDelay').value,
+    fade: +document.getElementById('g_fade').value, hold: +document.getElementById('g_hold').value,
+    retDelay: +document.getElementById('g_retDelay').value, retSpread: +document.getElementById('g_retSpread').value,
+    stepCounts: gStepCounts.slice()
+  };
+}
+function loadParamsIntoWave(p) {
+  const $ = id => document.getElementById(id);
+  $('g_wiring').value = p.wiring || 'linear'; $('g_leftRgb').value = p.leftRgb || '#ff4fd8'; $('g_leftW').value = p.leftW ?? 0;
+  $('g_rightRgb').value = p.rightRgb || '#000000'; $('g_rightW').value = p.rightW ?? 200;
+  $('g_split').value = p.split ?? 20; $('g_blend').value = p.blend ?? 50;
+  $('g_neutralRgb').value = p.neutralRgb || '#1a1408'; $('g_neutralW').value = p.neutralW ?? 255;
+  $('g_edgeRgb').value = p.edgeRgb || '#8fd8ff'; $('g_edgeW').value = p.edgeW ?? 0;
+  $('g_bri').value = p.bri ?? 190; $('g_restBri').value = p.restBri ?? 80;
+  $('g_stepDelay').value = p.stepDelay ?? 160; $('g_sideDelay').value = p.sideDelay ?? 260;
+  $('g_fade').value = p.fade ?? 1400; $('g_hold').value = p.hold ?? 5;
+  $('g_retDelay').value = p.retDelay ?? 285; $('g_retSpread').value = p.retSpread ?? 8;
+  if (p.stepCounts && p.stepCounts.length === STEPS) gStepCounts = p.stepCounts.slice();
+  else gStepCounts = Array.from({ length: STEPS }, () => DEF_PPX);
+  gStop(); buildStairs(); updateLabels(); gRest();
+}
+async function saveWaveToSlot() {
+  const idx = +document.getElementById('waveSlotSel').value;
+  const name = document.getElementById('waveName').value.trim() || ('Programm ' + (idx+1));
+  await API.savePreset(idx, { name, type: 'wave', saved: new Date().toISOString(), params: getCurrentWaveParams() });
+  flashSaveOk('waveSaveOk');
+}
+async function saveDiscoToSlot() {
+  const idx = +document.getElementById('discoSlotSel').value;
+  const name = document.getElementById('discoName').value.trim() || ('Disco ' + (idx+1));
+  await API.savePreset(idx, { name, type: 'disco', saved: new Date().toISOString(), params: getCurrentDiscoParams() });
+  flashSaveOk('discoSaveOk');
+}
+function flashSaveOk(id) { const ok = document.getElementById(id); ok.style.display = 'inline'; setTimeout(() => ok.style.display = 'none', 2000); }
+async function loadFromSlotDialog(targetType) {
+  const slots = await API.getPresets();
+  const lines = slots.map((s,i) => (i+1) + ': ' + (s ? `${s.name} [${s.type==='disco'?'Disco':'Welle'}]` : '(leer)')).join('\n');
+  const inp = prompt('Welchen Slot laden?\n' + lines + '\nNummer eingeben (1-6):');
+  if (!inp) return;
+  const idx = parseInt(inp) - 1;
+  if (isNaN(idx) || idx < 0 || idx >= NUM_SLOTS) { alert('Ungültige Nummer.'); return; }
+  if (!slots[idx]) { alert('Slot ' + (idx+1) + ' ist leer.'); return; }
+  const slot = slots[idx];
+  if (slot.type !== targetType) { alert(`Dieser Slot enthält ein ${slot.type==='disco'?'Disco':'Wellen'}-Programm.`); return; }
+  if (slot.type === 'disco') { loadParamsIntoDisco(slot.params); document.getElementById('discoSlotSel').value = String(idx); document.getElementById('discoName').value = slot.name; }
+  else { loadParamsIntoWave(slot.params); document.getElementById('waveSlotSel').value = String(idx); document.getElementById('waveName').value = slot.name; }
+}
+
+// ════════════════════════════════════════════════════════
+// WAVE ENGINE (RGBW)
+// ════════════════════════════════════════════════════════
+function gStepLed(s)    { return Math.max(1, Number(gStepCounts[s]) || DEF_PPX); }
+function gTotalPx()     { return gStepCounts.reduce((a,c)=>a+Math.max(1,Number(c)||DEF_PPX),0); }
+function gStepStart(s)  { let x=0; for(let i=0;i<s;i++) x+=gStepLed(i); return x; }
+function gExtraL(s)     { return Math.ceil(Math.max(0,gStepLed(s)-BASE_PX)/2); }
+function gExtraR(s)     { return Math.floor(Math.max(0,gStepLed(s)-BASE_PX)/2); }
+function gPhysCoord(s,p){ return p - gExtraL(s); }
+function gGeo() {
+  let mn=0, mx=BASE_PX-1;
+  for(let s=0;s<STEPS;s++){mn=Math.min(mn,-gExtraL(s));mx=Math.max(mx,BASE_PX-1+gExtraR(s));}
+  return{mn,mx,cols:mx-mn+1};
+}
+function gLedIdx(s,p) {
+  const base=gStepStart(s),cnt=gStepLed(s);
+  if(document.getElementById('g_wiring').value==='serpentine'&&s%2===1) return base+(cnt-1-p);
+  return base+p;
+}
+function buildStairs() {
+  const el=document.getElementById('gen-stairs'); if(!el) return;
+  el.innerHTML=''; gPixels=[];
+  const geo=gGeo();
+  for(let s=0;s<STEPS;s++){
+    const row=document.createElement('div'); row.className='step-row';
+    const lbl=document.createElement('div'); lbl.className='step-label'; lbl.textContent='Stufe '+String(s+1).padStart(2,'0');
+    const inp=document.createElement('input'); inp.type='number'; inp.min='1'; inp.max='60'; inp.step='1';
+    inp.className='step-cnt'; inp.value=gStepLed(s);
+    inp.style.cssText='background:var(--panel2);color:var(--text);border:1px solid var(--border);';
+    inp.addEventListener('input',()=>{ gStepCounts[s]=Math.max(1,Math.min(60,Number(inp.value)||DEF_PPX)); gStop(); buildStairs(); updateLabels(); if(!gBlackout) gRest(); });
+    const wrap=document.createElement('div'); wrap.className='pixels';
+    wrap.style.gridTemplateColumns='repeat('+geo.cols+', minmax(22px, 1fr))';
+    const cnt=gStepLed(s);
+    for(let p=0;p<cnt;p++){
+      const dot=document.createElement('div'); dot.className='pixel';
+      const coord=gPhysCoord(s,p);
+      if(coord<0||coord>BASE_PX-1) dot.classList.add('extra');
+      const idx=gLedIdx(s,p); dot.dataset.led=idx;
+      dot.style.gridColumn=String(coord-geo.mn+1);
+      wrap.appendChild(dot); gPixels[idx]={el:dot,s,p,coord};
+    }
+    row.appendChild(lbl); row.appendChild(inp); row.appendChild(wrap); el.appendChild(row);
+  }
+  gUpdateStats();
+}
+function gUpdateStats() { const tot=gTotalPx(); document.getElementById('g_stats').textContent=`LED 0–${tot-1} · ${tot} LEDs gesamt`; }
+function getColorFromUI(prefix) { const rgb=hexToRgb(document.getElementById(prefix+'Rgb').value); return{r:rgb.r,g:rgb.g,b:rgb.b,w:+document.getElementById(prefix+'W').value}; }
+function restColor(s,p) {
+  const L=getColorFromUI('g_left'),R=getColorFromUI('g_right'),cnt=gStepLed(s);
+  const x=cnt<=1?0:p/(cnt-1),sp=+document.getElementById('g_split').value/100,bw=+document.getElementById('g_blend').value/100;
+  return mixRgbw(L,R,smoothstep(sp-bw/2,sp+bw/2,x));
+}
+function neutralColor(s,p) {
+  const N=getColorFromUI('g_neutral'),E=getColorFromUI('g_edge'),cnt=gStepLed(s);
+  const d=Math.min(p,cnt-1-p); const ea=d===0?1:d===1?0.88:d===2?0.68:d===3?0.28:0;
+  return mixRgbw(N,E,ea);
+}
+function setPx(pixelArr,idx,rgbw,bri01,active=0) {
+  const px=pixelArr[idx]; if(!px) return;
+  const i=clamp(bri01,0,1);
+  const visual=rgbwToVisual({r:rgbw.r*i,g:rgbw.g*i,b:rgbw.b*i,w:rgbw.w*i});
+  const r=Math.round(visual.r),g=Math.round(visual.g),b=Math.round(visual.b);
+  const gw=Math.round(6+22*i+10*active);
+  px.el.style.background=`rgb(${r},${g},${b})`;
+  px.el.style.boxShadow=`0 0 ${gw}px rgba(${r},${g},${b},${0.25+0.55*i}), inset 0 0 4px rgba(255,255,255,${0.10+0.14*i})`;
+  px.el.style.transform=active>0.75?'scale(1.09)':'scale(1)';
+}
+function maxSideDist(){let m=0;for(let s=0;s<STEPS;s++)for(let p=0;p<gStepLed(s);p++){const c=gPhysCoord(s,p);m=Math.max(m,c<=6?6-c:c-7);}return m;}
+function waveStart(s,p){const sd=+document.getElementById('g_stepDelay').value,si=+document.getElementById('g_sideDelay').value,c=gPhysCoord(s,p);return s*sd+(c<=6?6-c:c-7)*si;}
+function fullWave(){return(STEPS-1)*+document.getElementById('g_stepDelay').value+maxSideDist()*+document.getElementById('g_sideDelay').value+ +document.getElementById('g_fade').value;}
+function retFade(){const base=+document.getElementById('g_fade').value,rd=+document.getElementById('g_retDelay').value,sp=+document.getElementById('g_retSpread').value;return Math.max(base,rd*sp);}
+function totalSeq(){return fullWave()+ +document.getElementById('g_hold').value*1000+(STEPS-1)*+document.getElementById('g_retDelay').value+retFade();}
+function neutralAmount(s,p,el){
+  const fd=+document.getElementById('g_fade').value,hld=+document.getElementById('g_hold').value*1000,rd=+document.getElementById('g_retDelay').value,rf=retFade(),wd=fullWave(),rs=wd+hld,st=waveStart(s,p);
+  const up=smoothstep(st,st+fd,el); if(el<rs) return up;
+  const bs=rs+s*rd; return clamp(up*(1-smoothstep(bs,bs+rf,el)),0,1);
+}
+function gRest(){gBlackout=false;setPhase('Ruheposition');const bri=+document.getElementById('g_restBri').value/255;for(let s=0;s<STEPS;s++)for(let p=0;p<gStepLed(s);p++)setPx(gPixels,gLedIdx(s,p),restColor(s,p),bri,0);}
+function gNeutral(){gBlackout=false;setPhase('Triggerfarbe');const bri=+document.getElementById('g_bri').value/255;for(let s=0;s<STEPS;s++)for(let p=0;p<gStepLed(s);p++)setPx(gPixels,gLedIdx(s,p),neutralColor(s,p),bri,1);}
+function gBlack(){gBlackout=true;setPhase('Alles aus');for(let i=0;i<gTotalPx();i++){if(!gPixels[i])continue;gPixels[i].el.style.background='var(--off)';gPixels[i].el.style.boxShadow='inset 0 0 4px rgba(0,0,0,0.85)';gPixels[i].el.style.transform='scale(1)';}}
+function gFrame(now){
+  if(!gRunning)return;
+  const el=now-gStartTime,rb=+document.getElementById('g_restBri').value/255,mb=+document.getElementById('g_bri').value/255,wd=fullWave(),rs=wd+ +document.getElementById('g_hold').value*1000,tot=totalSeq();
+  if(el<wd)setPhase('Welle läuft hoch');else if(el<rs)setPhase('Triggerfarbe halten');else setPhase('Rückfade zu Ruheposition');
+  for(let s=0;s<STEPS;s++)for(let p=0;p<gStepLed(s);p++){const n=neutralAmount(s,p,el);const rgbw=mixRgbw(restColor(s,p),neutralColor(s,p),n);const bri=rb+(mb-rb)*n;setPx(gPixels,gLedIdx(s,p),rgbw,bri,n);}
+  if(el>=tot){gRunning=false;gPauseOff=0;gRest();return;} gRafId=requestAnimationFrame(gFrame);
+}
+function gTrigger(){const mode=document.getElementById('g_mode').value;if(mode==='rest'){gStop();gRest();return;}if(mode==='neutral'){gStop();gNeutral();return;}gRunning=true;gPaused=false;gBlackout=false;gStartTime=performance.now()-gPauseOff;gRafId=requestAnimationFrame(gFrame);}
+function gPause(){if(!gRunning)return;gRunning=false;gPaused=true;cancelAnimationFrame(gRafId);gPauseOff=performance.now()-gStartTime;setPhase('Pause');}
+function gStop(){gRunning=false;gPaused=false;gPauseOff=0;cancelAnimationFrame(gRafId);}
+function setPhase(t){const e=document.getElementById('g_phase');if(e)e.textContent=t;}
+function updateRgbwPreview(prefix,previewId){const c=getColorFromUI(prefix),v=rgbwToVisual(c),el=document.getElementById(previewId);if(el)el.style.background=`rgb(${Math.round(v.r)},${Math.round(v.g)},${Math.round(v.b)})`;}
+function updateLabels(){
+  const $=id=>document.getElementById(id);
+  $('v_split').textContent=$('g_split').value+' %'; $('v_blend').textContent=$('g_blend').value+' %';
+  $('v_bri').textContent=$('g_bri').value; $('v_restBri').textContent=$('g_restBri').value;
+  $('v_stepDelay').textContent=$('g_stepDelay').value+' ms'; $('v_sideDelay').textContent=$('g_sideDelay').value+' ms';
+  $('v_fade').textContent=$('g_fade').value+' ms'; $('v_hold').textContent=$('g_hold').value+' s';
+  $('v_retDelay').textContent=$('g_retDelay').value+' ms'; $('v_retSpread').textContent=$('g_retSpread').value;
+  $('v_retFade').textContent=Math.round(retFade()); $('v_leftW').textContent=$('g_leftW').value;
+  $('v_rightW').textContent=$('g_rightW').value; $('v_neutralW').textContent=$('g_neutralW').value; $('v_edgeW').textContent=$('g_edgeW').value;
+  updateRgbwPreview('g_left','prev_left'); updateRgbwPreview('g_right','prev_right');
+  updateRgbwPreview('g_neutral','prev_neutral'); updateRgbwPreview('g_edge','prev_edge');
+  const stEl=document.getElementById('gen-stairs'); if(stEl) stEl.classList.toggle('show-numbers',$('g_showNum').value==='yes');
+  gUpdateStats();
+}
+document.getElementById('g_trigBtn').addEventListener('click',gTrigger);
+document.getElementById('g_pauseBtn').addEventListener('click',gPause);
+document.getElementById('g_restBtn').addEventListener('click',()=>{gStop();gRest();});
+document.getElementById('g_blackBtn').addEventListener('click',()=>{gStop();gBlack();});
+['g_mode','g_wiring','g_leftRgb','g_leftW','g_rightRgb','g_rightW','g_split','g_blend','g_neutralRgb','g_neutralW','g_edgeRgb','g_edgeW','g_bri','g_restBri','g_stepDelay','g_sideDelay','g_fade','g_hold','g_retDelay','g_retSpread','g_showNum'].forEach(id=>{
+  const el=document.getElementById(id); if(!el) return;
+  el.addEventListener('input',()=>{updateLabels();if(id==='g_wiring'){gStop();buildStairs();}if(!gRunning&&!gBlackout){document.getElementById('g_mode').value==='neutral'?gNeutral():gRest();}});
+});
+
+// ════════════════════════════════════════════════════════
+// DISCO GENERATOR
+// ════════════════════════════════════════════════════════
+function getCurrentDiscoParams() {
+  return {
+    effectType: document.getElementById('d_effectType').value,
+    bassRgb: document.getElementById('d_bassRgb').value, bassW: +document.getElementById('d_bassW').value,
+    midRgb: document.getElementById('d_midRgb').value,   midW:  +document.getElementById('d_midW').value,
+    highRgb: document.getElementById('d_highRgb').value, highW: +document.getElementById('d_highW').value,
+    vuBaseRgb: document.getElementById('d_vuBaseRgb').value, vuBaseW: +document.getElementById('d_vuBaseW').value,
+    vuBaseDim: +document.getElementById('d_vuBaseDim').value,
+    gain: +document.getElementById('d_gain').value, beatThresh: +document.getElementById('d_beatThresh').value,
+    bri: +document.getElementById('d_bri').value, decay: +document.getElementById('d_decay').value,
+    idle: document.getElementById('d_idle').value
+  };
+}
+function loadParamsIntoDisco(p) {
+  const $=id=>document.getElementById(id);
+  $('d_effectType').value=p.effectType||'vumeter'; $('d_bassRgb').value=p.bassRgb||'#ff2233'; $('d_bassW').value=p.bassW??0;
+  $('d_midRgb').value=p.midRgb||'#33ff66'; $('d_midW').value=p.midW??0;
+  $('d_highRgb').value=p.highRgb||'#3399ff'; $('d_highW').value=p.highW??0;
+  $('d_vuBaseRgb').value=p.vuBaseRgb||'#ff3aaa'; $('d_vuBaseW').value=p.vuBaseW??0; $('d_vuBaseDim').value=p.vuBaseDim??15;
+  $('d_gain').value=p.gain??128; $('d_beatThresh').value=p.beatThresh??160;
+  $('d_bri').value=p.bri??220; $('d_decay').value=p.decay??25; $('d_idle').value=p.idle||'off';
+  updateDiscoLabels(); if(dPixels.length===0)buildDiscoStairs(); buildFreqBands(); dRenderIdle();
+}
+function buildDiscoStairs() {
+  const el=document.getElementById('disco-stairs'); if(!el) return;
+  el.innerHTML=''; dPixels=[];
+  const geo=gGeo();
+  for(let s=0;s<STEPS;s++){
+    const row=document.createElement('div'); row.className='step-row';
+    const lbl=document.createElement('div'); lbl.className='step-label'; lbl.textContent='Stufe '+String(s+1).padStart(2,'0');
+    const spacer=document.createElement('div');
+    const wrap=document.createElement('div'); wrap.className='pixels';
+    wrap.style.gridTemplateColumns='repeat('+geo.cols+', minmax(22px, 1fr))';
+    const cnt=gStepLed(s);
+    for(let p=0;p<cnt;p++){
+      const dot=document.createElement('div'); dot.className='pixel';
+      const coord=gPhysCoord(s,p); if(coord<0||coord>BASE_PX-1)dot.classList.add('extra');
+      const idx=gLedIdx(s,p); dot.dataset.led=idx; dot.style.gridColumn=String(coord-geo.mn+1);
+      wrap.appendChild(dot); dPixels[idx]={el:dot,s,p,coord};
+    }
+    row.appendChild(lbl); row.appendChild(spacer); row.appendChild(wrap); el.appendChild(row);
+  }
+}
+function buildFreqBands() {
+  const c=document.getElementById('freqBands'); if(!c) return; c.innerHTML='';
+  const labels=['60Hz','120Hz','250Hz','500Hz','800Hz','1.2k','1.6k','2k','2.5k','3k','3.5k','4k','4.5k','5k','5.5k','6k+'];
+  for(let i=0;i<16;i++){
+    const div=document.createElement('div'); div.className='freq-band';
+    div.innerHTML=`<span class="freq-band-label">B${i}</span><span class="freq-band-label" style="text-align:right">${labels[i]}</span><div class="freq-band-bar"><div class="freq-band-fill" id="fb_${i}"></div></div><span class="freq-band-label" id="fb_v_${i}" style="text-align:right">0</span>`;
+    c.appendChild(div);
+  }
+}
+function updateFreqBandsUI(){for(let i=0;i<16;i++){const fill=document.getElementById('fb_'+i),val=document.getElementById('fb_v_'+i);if(fill)fill.style.width=(dBands[i]/255*100)+'%';if(val)val.textContent=Math.round(dBands[i]);}}
+function dRenderIdle(){
+  const idle=document.getElementById('d_idle').value;
+  for(let i=0;i<dPixels.length;i++){
+    if(!dPixels[i])continue;
+    if(idle==='off'){dPixels[i].el.style.background='var(--off)';dPixels[i].el.style.boxShadow='inset 0 0 4px rgba(0,0,0,0.85)';}
+    else if(idle==='dim'){dPixels[i].el.style.background='rgb(20,20,30)';dPixels[i].el.style.boxShadow='inset 0 0 4px rgba(0,0,0,0.85)';}
+    else{const px=dPixels[i],c=restColor(px.s,px.p),v=rgbwToVisual({r:c.r*0.3,g:c.g*0.3,b:c.b*0.3,w:c.w*0.3});dPixels[i].el.style.background=`rgb(${Math.round(v.r)},${Math.round(v.g)},${Math.round(v.b)})`;dPixels[i].el.style.boxShadow='inset 0 0 4px rgba(0,0,0,0.85)';}
+    dPixels[i].el.style.transform='scale(1)';
+  }
+}
+function dRenderFromBands(){
+  const effectType=document.getElementById('d_effectType').value;
+  const bassC={...hexToRgb(document.getElementById('d_bassRgb').value),w:+document.getElementById('d_bassW').value};
+  const midC ={...hexToRgb(document.getElementById('d_midRgb').value), w:+document.getElementById('d_midW').value};
+  const highC={...hexToRgb(document.getElementById('d_highRgb').value),w:+document.getElementById('d_highW').value};
+  const bri=+document.getElementById('d_bri').value/255;
+  const gain=+document.getElementById('d_gain').value/128;
+  const bassAvg=(dBands[0]+dBands[1]+dBands[2]+dBands[3])/4/255;
+  const midAvg =(dBands[4]+dBands[5]+dBands[6]+dBands[7]+dBands[8])/5/255;
+  const highAvg=(dBands[9]+dBands[10]+dBands[11]+dBands[12]+dBands[13]+dBands[14]+dBands[15])/7/255;
+
+  if(effectType==='vumeter'){
+    const bassLvl=clamp(bassAvg*gain,0,1),midLvl=clamp(midAvg*gain,0,1),highLvl=clamp(highAvg*gain,0,1);
+    const vuBaseRgb=hexToRgb(document.getElementById('d_vuBaseRgb').value);
+    const vuBaseW=+document.getElementById('d_vuBaseW').value;
+    const vuBaseDim=+document.getElementById('d_vuBaseDim').value/100;
+    const baseColor={r:vuBaseRgb.r,g:vuBaseRgb.g,b:vuBaseRgb.b,w:vuBaseW};
+    const CENTER_C={r:0,g:150,b:255,w:0},EDGE_C={r:255,g:200,b:0,w:0};
+    const ATTACK=0.65,RELEASE=0.05;
+    for(let s=0;s<STEPS;s++){
+      const rawLvl=s<4?bassLvl:s<8?midLvl:highLvl;
+      const alpha=rawLvl>dVuSmooth[s]?ATTACK:RELEASE;
+      dVuSmooth[s]+=(rawLvl-dVuSmooth[s])*alpha;
+      const lvl=dVuSmooth[s],cnt=gStepLed(s),center=(cnt-1)/2,activeR=lvl*center;
+      for(let p=0;p<cnt;p++){
+        const dist=Math.abs(p-center);
+        let color,intensity,act;
+        if(activeR>0.001&&dist<=activeR){
+          const t=dist/activeR;
+          color={r:CENTER_C.r+(EDGE_C.r-CENTER_C.r)*t,g:CENTER_C.g+(EDGE_C.g-CENTER_C.g)*t,b:CENTER_C.b+(EDGE_C.b-CENTER_C.b)*t,w:0};
+          intensity=bri;act=lvl;
+        }else{color=baseColor;intensity=bri*vuBaseDim;act=0;}
+        setPx(dPixels,gLedIdx(s,p),color,intensity,act);
+      }
+    }
+  }else if(effectType==='beat'){
+    const beatThresh=+document.getElementById('d_beatThresh').value;
+    const isBeat=bassAvg*255>beatThresh;
+    const c=isBeat?bassC:{r:0,g:0,b:0,w:0};
+    for(let s=0;s<STEPS;s++)for(let p=0;p<gStepLed(s);p++)setPx(dPixels,gLedIdx(s,p),c,bri,isBeat?1:0);
+  }else if(effectType==='frequencyBands'){
+    for(let s=0;s<STEPS;s++){
+      const bidx=Math.min(15,Math.floor(s*16/STEPS)),intensity=dBands[bidx]/255;
+      const c=bidx<4?bassC:bidx<9?midC:highC;
+      for(let p=0;p<gStepLed(s);p++)setPx(dPixels,gLedIdx(s,p),c,bri*intensity,intensity);
+    }
+  }else if(effectType==='colorPulse'){
+    const c=mixRgbw(mixRgbw(bassC,midC,midAvg),highC,highAvg),intensity=(bassAvg+midAvg+highAvg)/3;
+    for(let s=0;s<STEPS;s++)for(let p=0;p<gStepLed(s);p++)setPx(dPixels,gLedIdx(s,p),c,bri*intensity,intensity);
+  }
+}
+function dDemoStep(){
+  if(!dRunning)return; dDemoBeat+=0.04;
+  const kick=Math.max(0,Math.sin(dDemoBeat*2.4)),snare=Math.max(0,Math.sin(dDemoBeat*1.2+1.6)),hihat=(Math.sin(dDemoBeat*9.6)*0.5+0.5),melody=Math.sin(dDemoBeat*0.7)*0.5+0.5;
+  for(let i=0;i<4;i++)  dBands[i]=clamp(kick*240+melody*30,0,255);
+  for(let i=4;i<9;i++)  dBands[i]=clamp(snare*180+melody*60,0,255);
+  for(let i=9;i<16;i++) dBands[i]=clamp(hihat*(100+melody*80),0,255);
+  updateFreqBandsUI(); dRenderFromBands(); dRafId=requestAnimationFrame(dDemoStep);
+}
+function dStartDemo(){if(dRunning)return;dRunning=true;document.getElementById('d_phase').textContent='Demo-Beat aktiv';dDemoStep();}
+function dStop(){
+  dRunning=false;cancelAnimationFrame(dRafId);
+  if(dMicCtx){dMicCtx.close();dMicCtx=null;dMicAnalyzer=null;}
+  document.getElementById('d_phase').textContent='Idle';
+  for(let i=0;i<16;i++)dBands[i]=0;
+  dVuSmooth=new Array(STEPS).fill(0);
+  updateFreqBandsUI();dRenderIdle();
+}
+function dBlackAll(){dStop();document.getElementById('d_phase').textContent='Alles aus';for(let i=0;i<dPixels.length;i++){if(!dPixels[i])continue;dPixels[i].el.style.background='var(--off)';dPixels[i].el.style.boxShadow='inset 0 0 4px rgba(0,0,0,0.85)';dPixels[i].el.style.transform='scale(1)';}}
+async function dStartMic(){
+  if(dRunning)dStop();
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    dMicCtx=new(window.AudioContext||window.webkitAudioContext)();
+    const source=dMicCtx.createMediaStreamSource(stream);
+    dMicAnalyzer=dMicCtx.createAnalyser(); dMicAnalyzer.fftSize=512;
+    source.connect(dMicAnalyzer); dRunning=true;
+    document.getElementById('d_phase').textContent='Browser-Mic aktiv'; dMicStep();
+  }catch(e){alert('Mikrofon-Zugriff verweigert: '+e.message);}
+}
+function dMicStep(){
+  if(!dRunning||!dMicAnalyzer)return;
+  const bins=new Uint8Array(dMicAnalyzer.frequencyBinCount); dMicAnalyzer.getByteFrequencyData(bins);
+  const sampleRate=dMicCtx.sampleRate,binFreq=sampleRate/2/bins.length;
+  for(let band=0;band<16;band++){
+    const fLow=60*Math.pow(100,band/16),fHigh=60*Math.pow(100,(band+1)/16);
+    const iLow=Math.floor(fLow/binFreq),iHigh=Math.min(bins.length-1,Math.floor(fHigh/binFreq));
+    let sum=0; for(let i=iLow;i<=iHigh;i++)sum+=bins[i];
+    const avg=sum/Math.max(1,iHigh-iLow+1),gain=+document.getElementById('d_gain').value/128;
+    dBands[band]=clamp(avg*gain,0,255);
+  }
+  updateFreqBandsUI(); dRenderFromBands(); dRafId=requestAnimationFrame(dMicStep);
+}
+function updateDiscoLabels(){
+  const $=id=>document.getElementById(id);
+  $('v_d_bassW').textContent=$('d_bassW').value; $('v_d_midW').textContent=$('d_midW').value; $('v_d_highW').textContent=$('d_highW').value;
+  $('v_d_vuBaseW').textContent=$('d_vuBaseW').value; $('v_d_vuBaseDim').textContent=$('d_vuBaseDim').value+' %';
+  $('v_d_gain').textContent=$('d_gain').value; $('v_d_beatThresh').textContent=$('d_beatThresh').value;
+  $('v_d_bri').textContent=$('d_bri').value; $('v_d_decay').textContent=$('d_decay').value;
+  const updatePrev=(prefix,prevId)=>{const c={...hexToRgb($(prefix+'Rgb').value),w:+$(prefix+'W').value},v=rgbwToVisual(c);document.getElementById(prevId).style.background=`rgb(${Math.round(v.r)},${Math.round(v.g)},${Math.round(v.b)})`;};
+  updatePrev('d_bass','prev_bass'); updatePrev('d_mid','prev_mid'); updatePrev('d_high','prev_high'); updatePrev('d_vuBase','prev_vuBase');
+}
+document.getElementById('d_demoBtn').addEventListener('click',dStartDemo);
+document.getElementById('d_demoStopBtn').addEventListener('click',dStop);
+document.getElementById('d_blackBtn').addEventListener('click',dBlackAll);
+document.getElementById('d_micBtn').addEventListener('click',dStartMic);
+['d_effectType','d_bassRgb','d_bassW','d_midRgb','d_midW','d_highRgb','d_highW','d_vuBaseRgb','d_vuBaseW','d_vuBaseDim','d_gain','d_beatThresh','d_bri','d_decay','d_idle'].forEach(id=>{
+  const el=document.getElementById(id); if(!el) return;
+  el.addEventListener('input',()=>{updateDiscoLabels();if(!dRunning)dRenderIdle();});
+});
+
+// ════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════
+buildStairs(); updateLabels(); gRest();
+buildDiscoStairs(); buildFreqBands(); updateDiscoLabels(); dRenderIdle();
+renderDashboard();
+</script>
+</body>
+</html>
