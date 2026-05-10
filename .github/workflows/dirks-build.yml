@@ -48,6 +48,13 @@ jobs:
         run: |
           python dirk/patch_wled.py wled/wled00/usermods_list.cpp
 
+      # ── 5b. Embed stair.html as PROGMEM C array in firmware ──────────
+      - name: Generate stair_html.h from stair.html
+        run: |
+          python dirk/generate_html_header.py \
+            dirk/html/stair.html \
+            wled/usermods/stair_controller/stair_html.h
+
       # ── 6. Copy our PlatformIO override ─────────────────────────────
       - name: Copy platformio_override.ini
         run: |
