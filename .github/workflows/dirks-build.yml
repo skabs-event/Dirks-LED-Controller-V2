@@ -1,0 +1,68 @@
+name: Build Dirk's LED Controller V2
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:   # manual trigger via GitHub UI
+
+jobs:
+  build:
+    name: Compile WLED + StairController (ESP32)
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Check out THIS repo (our usermod + patch script) ──────────
+      - name: Checkout Dirks_LED_Controller_V2
+        uses: actions/checkout@v4
+        with:
+          path: dirk
+
+      # ── 2. Check out official WLED repo ─────────────────────────────
+      - name: Checkout WLED
+        uses: actions/checkout@v4
+        with:
+          repository: Aircoookie/WLED
+          ref: v0.15.0-b4          # pin to a stable release
+          path: wled
+          submodules: recursive
+
+      # ── 3. Install Python 3 + PlatformIO ────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      # ── 4. Copy our usermod into WLED tree ──────────────────────────
+      - name: Copy StairController usermod
+        run: |
+          cp -r dirk/usermods/stair_controller \
+                wled/usermods/stair_controller
+
+      # ── 5. Patch usermods_list.cpp to register our usermod ───────────
+      - name: Patch WLED usermods_list.cpp
+        run: |
+          python dirk/patch_wled.py wled/wled00/usermods_list.cpp
+
+      # ── 6. Copy our PlatformIO override ─────────────────────────────
+      - name: Copy platformio_override.ini
+        run: |
+          cp dirk/platformio_override.ini wled/platformio_override.ini
+
+      # ── 7. Build ─────────────────────────────────────────────────────
+      - name: Build firmware
+        working-directory: wled
+        run: |
+          pio run -e esp32dev
+
+      # ── 8. Upload firmware.bin as downloadable artifact ──────────────
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dirks-led-controller-v2-firmware
+          path: wled/.pio/build/esp32dev/firmware.bin
+          retention-days: 30
