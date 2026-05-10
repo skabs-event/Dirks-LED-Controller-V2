@@ -1,0 +1,424 @@
+#pragma once
+#include "wled.h"
+#include "stair_engine.h"
+#include "stair_disco.h"
+
+// ─────────────────────────────────────────────────────────
+// StairController — WLED Usermod
+// Dirk's LED Controller V2
+//
+// Endpoints (served by this usermod):
+//   GET  /stair              → serves stair.html from LittleFS
+//   GET  /stair/api/presets  → returns JSON array of 6 slots
+//   POST /stair/api/preset/N → saves slot N (0-5)
+//   DEL  /stair/api/preset/N → deletes slot N
+//   GET  /stair/api/active   → { "slot": N or null }
+//   POST /stair/api/active   → { "slot": N or null }
+//   DEL  /stair/api/presets  → clear all slots
+//   POST /stair/api/trigger  → { "direction": "oben"|"unten" }
+//   GET  /stair/api/ping     → { "ok": true }
+//
+// Presets stored in LittleFS: /stair_presets.json
+// Web UI:                     /stair.html   (upload via /edit)
+//
+// Hardware: Gledopto Elite 4D EXMU 618WL (ESP32)
+//   LED pin: IO4 · PIR bottom: IO12 · PIR top: IO16
+//   Mic PDM: GPIO32 (SD) + GPIO15 (WS) → AudioReactive Usermod
+// ─────────────────────────────────────────────────────────
+
+#ifndef USERMOD_ID_STAIR_CONTROLLER
+  #define USERMOD_ID_STAIR_CONTROLLER 1952
+#endif
+
+#define SC_PRESETS_FILE  "/stair_presets.json"
+#define SC_HTML_FILE     "/stair.html"
+#define SC_NUM_SLOTS     6
+#define SC_PIR_DEBOUNCE  60    // ms
+#define SC_PIR_TIMEOUT   30000 // ms — stop animation if no re-trigger
+
+class StairController : public Usermod {
+public:
+  static const char _name[];
+  static const char _enabled[];
+
+private:
+  // ── Config (persisted via WLED config system) ─────────
+  bool    enabled          = true;
+  int8_t  pirPinBottom     = 12;
+  int8_t  pirPinTop        = 16;
+  uint8_t numSteps         = 18;
+  uint8_t defaultPxPerStep = 14;
+
+  // ── Runtime state ─────────────────────────────────────
+  bool     initDone        = false;
+  bool     overlayActive   = false;   // true = we own the LEDs
+  bool     discoMode       = false;   // true = audio-reactive running
+  int8_t   activeSlot      = -1;
+  String   presetsJson     = "{}";    // raw JSON from LittleFS
+
+  // PIR debounce
+  bool     pirBotPrev      = false;
+  bool     pirTopPrev      = false;
+  uint32_t pirBotTime      = 0;
+  uint32_t pirTopTime      = 0;
+
+  // Engines
+  StairEngine engine;
+  StairDisco  disco;
+
+  // AudioReactive FFT bands (updated each loop tick)
+  uint8_t fftBands[16] = {};
+
+  // ── LittleFS helpers ──────────────────────────────────
+  void loadFromFS() {
+    if (!WLED_FS.exists(SC_PRESETS_FILE)) { presetsJson = "{\"active\":null,\"slots\":[null,null,null,null,null,null]}"; return; }
+    File f = WLED_FS.open(SC_PRESETS_FILE, "r");
+    if (!f) return;
+    presetsJson = f.readString();
+    f.close();
+    // Read active slot
+    DynamicJsonDocument doc(128);
+    if (!deserializeJson(doc, presetsJson)) {
+      activeSlot = doc["active"].isNull() ? -1 : (int8_t)doc["active"].as<int>();
+    }
+  }
+
+  void saveToFS() {
+    File f = WLED_FS.open(SC_PRESETS_FILE, "w");
+    if (!f) return;
+    f.print(presetsJson);
+    f.close();
+  }
+
+  // ── JSON response helpers ──────────────────────────────
+  static void jsonOk(AsyncWebServerRequest* req, const String& body = "{}") {
+    req->send(200, "application/json", body);
+  }
+  static void jsonErr(AsyncWebServerRequest* req, int code, const char* msg) {
+    req->send(code, "application/json", String("{\"error\":\"") + msg + "\"}");
+  }
+
+  // ── HTTP route setup ──────────────────────────────────
+  void setupRoutes() {
+    // Serve the web UI from LittleFS
+    server.on("/stair", HTTP_GET, [this](AsyncWebServerRequest* req) {
+      if (WLED_FS.exists(SC_HTML_FILE)) {
+        req->send(WLED_FS, SC_HTML_FILE, "text/html");
+      } else {
+        req->send(200, "text/html",
+          "<h2>Dirk's LED Controller V2</h2>"
+          "<p>Bitte <b>stair.html</b> via <a href='/edit'>/edit</a> hochladen.</p>");
+      }
+    });
+
+    // Ping — used by HTML to detect ESP32 mode
+    server.on("/stair/api/ping", HTTP_GET, [](AsyncWebServerRequest* req) {
+      req->send(200, "application/json", "{\"ok\":true,\"v\":2}");
+    });
+
+    // GET all presets
+    server.on("/stair/api/presets", HTTP_GET, [this](AsyncWebServerRequest* req) {
+      jsonOk(req, presetsJson);
+    });
+
+    // DELETE all presets
+    server.on("/stair/api/presets", HTTP_DELETE, [this](AsyncWebServerRequest* req) {
+      presetsJson = "{\"active\":null,\"slots\":[null,null,null,null,null,null]}";
+      activeSlot = -1;
+      saveToFS();
+      stopAnimation();
+      jsonOk(req);
+    });
+
+    // GET active slot
+    server.on("/stair/api/active", HTTP_GET, [this](AsyncWebServerRequest* req) {
+      String body = "{\"slot\":";
+      if (activeSlot < 0) body += "null";
+      else                body += String(activeSlot);
+      body += "}";
+      jsonOk(req, body);
+    });
+
+    // POST active slot — body: { "slot": N or null }
+    server.on("/stair/api/active", HTTP_POST,
+      [](AsyncWebServerRequest*) {},
+      nullptr,
+      [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+        DynamicJsonDocument doc(128);
+        if (deserializeJson(doc, data, len)) { jsonErr(req, 400, "bad json"); return; }
+        activeSlot = doc["slot"].isNull() ? -1 : (int8_t)doc["slot"].as<int>();
+        // Update active field in presetsJson
+        DynamicJsonDocument full(8192);
+        if (!deserializeJson(full, presetsJson)) {
+          if (activeSlot < 0) full["active"] = nullptr;
+          else                full["active"] = activeSlot;
+          serializeJson(full, presetsJson);
+          saveToFS();
+        }
+        stopAnimation();
+        jsonOk(req);
+      }
+    );
+
+    // POST save a slot — URL: /stair/api/preset/N  body: slot JSON
+    server.on("/stair/api/preset", HTTP_POST,
+      [](AsyncWebServerRequest*) {},
+      nullptr,
+      [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+        // Slot number from URL param
+        int slot = -1;
+        if (req->hasParam("slot"))
+          slot = req->getParam("slot")->value().toInt();
+        if (slot < 0 || slot >= SC_NUM_SLOTS) { jsonErr(req, 400, "bad slot"); return; }
+
+        DynamicJsonDocument slotDoc(4096);
+        if (deserializeJson(slotDoc, data, len)) { jsonErr(req, 400, "bad json"); return; }
+
+        DynamicJsonDocument full(8192);
+        if (deserializeJson(full, presetsJson)) {
+          // Reset if corrupt
+          full.clear();
+          full["active"] = nullptr;
+          full.createNestedArray("slots");
+          for (int i = 0; i < SC_NUM_SLOTS; i++) full["slots"].add(nullptr);
+        }
+        full["slots"][slot] = slotDoc;
+        presetsJson = "";
+        serializeJson(full, presetsJson);
+        saveToFS();
+        jsonOk(req);
+      }
+    );
+
+    // DELETE a slot
+    server.on("/stair/api/preset", HTTP_DELETE,
+      [this](AsyncWebServerRequest* req) {
+        int slot = -1;
+        if (req->hasParam("slot"))
+          slot = req->getParam("slot")->value().toInt();
+        if (slot < 0 || slot >= SC_NUM_SLOTS) { jsonErr(req, 400, "bad slot"); return; }
+
+        DynamicJsonDocument full(8192);
+        if (!deserializeJson(full, presetsJson)) {
+          full["slots"][slot] = nullptr;
+          if (!full["active"].isNull() && (int)full["active"] == slot)
+            full["active"] = nullptr;
+          presetsJson = "";
+          serializeJson(full, presetsJson);
+          saveToFS();
+        }
+        jsonOk(req);
+      }
+    );
+
+    // POST trigger PIR — body: { "direction": "oben" | "unten" }
+    server.on("/stair/api/trigger", HTTP_POST,
+      [](AsyncWebServerRequest*) {},
+      nullptr,
+      [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+        DynamicJsonDocument doc(64);
+        deserializeJson(doc, data, len);
+        bool fromTop = String(doc["direction"].as<const char*>()) == "oben";
+        onPirTrigger(fromTop);
+        jsonOk(req);
+      }
+    );
+  }
+
+  // ── PIR trigger → animation start ────────────────────
+  void onPirTrigger(bool fromTop) {
+    if (activeSlot < 0) return;
+
+    DynamicJsonDocument full(8192);
+    if (deserializeJson(full, presetsJson)) return;
+    JsonVariant slotVar = full["slots"][activeSlot];
+    if (slotVar.isNull()) return;
+
+    const char* type = slotVar["type"] | "wave";
+    if (strcmp(type, "disco") == 0) {
+      loadDiscoParams(slotVar["params"]);
+      overlayActive = true;
+      discoMode     = true;
+      disco.resetSmoothing();
+    } else {
+      loadWaveParams(slotVar["params"]);
+      overlayActive = true;
+      discoMode     = false;
+      engine.trigger();
+    }
+  }
+
+  void stopAnimation() {
+    engine.stop();
+    overlayActive = false;
+    discoMode     = false;
+    disco.resetSmoothing();
+  }
+
+  // ── Parse JSON params → WaveParams ───────────────────
+  void loadWaveParams(JsonVariant p) {
+    WaveParams wp = {};
+    wp.numSteps         = numSteps;
+    wp.serpentine       = strcmp(p["wiring"] | "linear", "serpentine") == 0;
+
+    auto hexToRgb = [](const char* h, uint8_t& r, uint8_t& g, uint8_t& b) {
+      if (!h || h[0] != '#') return;
+      long v = strtol(h + 1, nullptr, 16);
+      r = (v >> 16) & 0xFF; g = (v >> 8) & 0xFF; b = v & 0xFF;
+    };
+
+    hexToRgb(p["leftRgb"]    | "#ff4fd8", wp.leftR,    wp.leftG,    wp.leftB);    wp.leftW    = p["leftW"]    | 0;
+    hexToRgb(p["rightRgb"]   | "#000000", wp.rightR,   wp.rightG,   wp.rightB);   wp.rightW   = p["rightW"]   | 200;
+    hexToRgb(p["neutralRgb"] | "#1a1408", wp.neutralR, wp.neutralG, wp.neutralB); wp.neutralW = p["neutralW"] | 255;
+    hexToRgb(p["edgeRgb"]    | "#8fd8ff", wp.edgeR,    wp.edgeG,    wp.edgeB);    wp.edgeW    = p["edgeW"]    | 0;
+
+    wp.bri       = p["bri"]       | 190;
+    wp.restBri   = p["restBri"]   | 80;
+    wp.stepDelay = p["stepDelay"] | 160;
+    wp.sideDelay = p["sideDelay"] | 260;
+    wp.fade      = p["fade"]      | 1400;
+    wp.hold      = p["hold"]      | 5;
+    wp.retDelay  = p["retDelay"]  | 285;
+    wp.retSpread = p["retSpread"] | 8;
+    wp.split     = p["split"]     | 20;
+    wp.blend     = p["blend"]     | 50;
+
+    JsonArray sc = p["stepCounts"];
+    for (uint8_t i = 0; i < numSteps && i < SC_MAX_STEPS; i++)
+      wp.stepCounts[i] = (sc && i < (uint8_t)sc.size()) ? (uint8_t)sc[i] : defaultPxPerStep;
+
+    engine.setParams(wp);
+  }
+
+  // ── Parse JSON params → DiscoParams ──────────────────
+  void loadDiscoParams(JsonVariant p) {
+    DiscoParams dp = {};
+    dp.numSteps   = numSteps;
+    dp.serpentine = strcmp(p["wiring"] | "linear", "serpentine") == 0;
+
+    auto hexToRgb = [](const char* h, uint8_t& r, uint8_t& g, uint8_t& b) {
+      if (!h || h[0] != '#') return;
+      long v = strtol(h + 1, nullptr, 16);
+      r = (v >> 16) & 0xFF; g = (v >> 8) & 0xFF; b = v & 0xFF;
+    };
+
+    hexToRgb(p["vuBaseRgb"] | "#ff3aaa", dp.vuBaseR, dp.vuBaseG, dp.vuBaseB);
+    dp.vuBaseW   = p["vuBaseW"]   | 0;
+    dp.vuBaseDim = p["vuBaseDim"] | 15;
+
+    hexToRgb(p["bassRgb"] | "#ff2233", dp.bassR, dp.bassG, dp.bassB); dp.bassW = p["bassW"] | 0;
+    hexToRgb(p["midRgb"]  | "#33ff66", dp.midR,  dp.midG,  dp.midB);  dp.midW  = p["midW"]  | 0;
+    hexToRgb(p["highRgb"] | "#3399ff", dp.highR, dp.highG, dp.highB); dp.highW = p["highW"] | 0;
+
+    dp.bri        = p["bri"]        | 220;
+    dp.gain       = p["gain"]       | 128;
+    dp.beatThresh = p["beatThresh"] | 160;
+
+    const char* et = p["effectType"] | "vumeter";
+    if      (strcmp(et, "vumeter")       == 0) dp.effectType = 0;
+    else if (strcmp(et, "beat")          == 0) dp.effectType = 1;
+    else if (strcmp(et, "frequencyBands")== 0) dp.effectType = 2;
+    else if (strcmp(et, "colorPulse")    == 0) dp.effectType = 3;
+    else                                        dp.effectType = 0;
+
+    JsonArray sc = p["stepCounts"];
+    for (uint8_t i = 0; i < numSteps && i < SC_MAX_STEPS; i++)
+      dp.stepCounts[i] = (sc && i < (uint8_t)sc.size()) ? (uint8_t)sc[i] : defaultPxPerStep;
+
+    disco.setParams(dp);
+  }
+
+  // ── Fetch FFT data from AudioReactive ────────────────
+  void updateFftBands() {
+#ifdef USERMOD_AUDIOREACTIVE
+    um_data_t* um_data = nullptr;
+    if (UsermodManager::getUMData(&um_data, USERMOD_ID_AUDIOREACTIVE)) {
+      uint8_t* src = (uint8_t*) um_data->u_data[0]; // fftResult[16]
+      if (src) memcpy(fftBands, src, 16);
+    }
+#endif
+  }
+
+public:
+  // ── Usermod interface ─────────────────────────────────
+  void setup() override {
+    if (!enabled) return;
+
+    // Configure PIR pins as inputs (low at boot — safe for IO12/IO16)
+    if (pirPinBottom >= 0) pinMode(pirPinBottom, INPUT);
+    if (pirPinTop    >= 0) pinMode(pirPinTop,    INPUT);
+
+    // Load saved presets from LittleFS
+    loadFromFS();
+
+    // Register HTTP routes
+    setupRoutes();
+
+    initDone = true;
+    DEBUG_PRINTLN(F("StairController: setup done"));
+  }
+
+  void loop() override {
+    if (!enabled || !initDone) return;
+
+    uint32_t now = millis();
+
+    // PIR bottom — rising edge trigger
+    bool botNow = (pirPinBottom >= 0) && digitalRead(pirPinBottom);
+    if (botNow && !pirBotPrev && (now - pirBotTime) > SC_PIR_DEBOUNCE) {
+      pirBotTime = now;
+      onPirTrigger(false);  // from bottom
+    }
+    pirBotPrev = botNow;
+
+    // PIR top — rising edge trigger
+    bool topNow = (pirPinTop >= 0) && digitalRead(pirPinTop);
+    if (topNow && !pirTopPrev && (now - pirTopTime) > SC_PIR_DEBOUNCE) {
+      pirTopTime = now;
+      onPirTrigger(true);   // from top
+    }
+    pirTopPrev = topNow;
+
+    // Disco: update FFT data each frame
+    if (discoMode && overlayActive) updateFftBands();
+  }
+
+  void handleOverlayDraw() override {
+    if (!enabled || !overlayActive) return;
+
+    if (discoMode) {
+      disco.tick(fftBands);
+    } else {
+      if (!engine.tick()) {
+        // Animation finished — back to rest
+        overlayActive = false;
+      }
+    }
+  }
+
+  // ── WLED Config serialisation ─────────────────────────
+  void addToConfig(JsonObject& root) override {
+    JsonObject top = root.createNestedObject(FPSTR(_name));
+    top[FPSTR(_enabled)]      = enabled;
+    top["pirPinBottom"]       = pirPinBottom;
+    top["pirPinTop"]          = pirPinTop;
+    top["numSteps"]           = numSteps;
+    top["defaultPxPerStep"]   = defaultPxPerStep;
+  }
+
+  bool readFromConfig(JsonObject& root) override {
+    JsonObject top = root[FPSTR(_name)];
+    if (top.isNull()) return false;
+    enabled          = top[FPSTR(_enabled)]    | enabled;
+    pirPinBottom     = top["pirPinBottom"]     | pirPinBottom;
+    pirPinTop        = top["pirPinTop"]        | pirPinTop;
+    numSteps         = top["numSteps"]         | numSteps;
+    defaultPxPerStep = top["defaultPxPerStep"] | defaultPxPerStep;
+    return true;
+  }
+
+  uint16_t getId() override { return USERMOD_ID_STAIR_CONTROLLER; }
+};
+
+const char StairController::_name[]    PROGMEM = "StairController";
+const char StairController::_enabled[] PROGMEM = "enabled";
