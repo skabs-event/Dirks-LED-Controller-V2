@@ -458,7 +458,7 @@ document.addEventListener('DOMContentLoaded', () => {
 const API = {
   async getPresets() {
     if (IS_ESP32) {
-      const r = await fetch('/stair/api/presets');
+      const r = await fetch('/sc/presets');
       const j = await r.json();
       return j.slots || new Array(NUM_SLOTS).fill(null);
     }
@@ -471,7 +471,7 @@ const API = {
   },
   async savePreset(slot, data) {
     if (IS_ESP32) {
-      await fetch('/stair/api/preset?slot=' + slot, {
+      await fetch('/sc/preset?slot=' + slot, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -482,7 +482,7 @@ const API = {
   },
   async deletePreset(slot) {
     if (IS_ESP32) {
-      await fetch('/stair/api/preset?slot=' + slot, { method: 'DELETE' });
+      await fetch('/sc/preset?slot=' + slot, { method: 'DELETE' });
       return;
     }
     localStorage.removeItem('stair_slot_' + slot);
@@ -490,7 +490,7 @@ const API = {
   },
   async getActive() {
     if (IS_ESP32) {
-      const r = await fetch('/stair/api/active');
+      const r = await fetch('/sc/active');
       const j = await r.json();
       return j.slot !== undefined ? j.slot : null;
     }
@@ -499,7 +499,7 @@ const API = {
   },
   async setActive(slot) {
     if (IS_ESP32) {
-      await fetch('/stair/api/active', {
+      await fetch('/sc/active', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slot })
@@ -511,7 +511,7 @@ const API = {
   },
   async clearAll() {
     if (IS_ESP32) {
-      await fetch('/stair/api/presets', { method: 'DELETE' });
+      await fetch('/sc/presets', { method: 'DELETE' });
       return;
     }
     for (let i = 0; i < NUM_SLOTS; i++) await this.deletePreset(i);
@@ -519,7 +519,7 @@ const API = {
   },
   async triggerPIR(direction) {
     if (IS_ESP32) {
-      await fetch('/stair/api/trigger', {
+      await fetch('/sc/trigger', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ direction })
