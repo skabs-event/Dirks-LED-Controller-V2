@@ -110,18 +110,19 @@ private:
       req->send(resp);
     });
 
+    // ── API routes unter /sc/ — separater Prefix um Kollision mit /stair zu vermeiden ──
     // Ping — used by HTML to detect ESP32 mode
-    server.on("/stair/api/ping", HTTP_GET, [](AsyncWebServerRequest* req) {
+    server.on("/sc/ping", HTTP_GET, [](AsyncWebServerRequest* req) {
       req->send(200, "application/json", "{\"ok\":true,\"v\":2}");
     });
 
     // GET all presets
-    server.on("/stair/api/presets", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    server.on("/sc/presets", HTTP_GET, [this](AsyncWebServerRequest* req) {
       jsonOk(req, presetsJson);
     });
 
     // DELETE all presets
-    server.on("/stair/api/presets", HTTP_DELETE, [this](AsyncWebServerRequest* req) {
+    server.on("/sc/presets", HTTP_DELETE, [this](AsyncWebServerRequest* req) {
       presetsJson = "{\"active\":null,\"slots\":[null,null,null,null,null,null]}";
       activeSlot = -1;
       saveToFS();
@@ -130,7 +131,7 @@ private:
     });
 
     // GET active slot
-    server.on("/stair/api/active", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    server.on("/sc/active", HTTP_GET, [this](AsyncWebServerRequest* req) {
       String body = "{\"slot\":";
       if (activeSlot < 0) body += "null";
       else                body += String(activeSlot);
@@ -139,7 +140,7 @@ private:
     });
 
     // POST active slot — body: { "slot": N or null }
-    server.on("/stair/api/active", HTTP_POST,
+    server.on("/sc/active", HTTP_POST,
       [](AsyncWebServerRequest*) {},
       nullptr,
       [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
@@ -159,12 +160,11 @@ private:
       }
     );
 
-    // POST save a slot — URL: /stair/api/preset/N  body: slot JSON
-    server.on("/stair/api/preset", HTTP_POST,
+    // POST save a slot — URL: /sc/preset?slot=N  body: slot JSON
+    server.on("/sc/preset", HTTP_POST,
       [](AsyncWebServerRequest*) {},
       nullptr,
       [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
-        // Slot number from URL param
         int slot = -1;
         if (req->hasParam("slot"))
           slot = req->getParam("slot")->value().toInt();
@@ -175,7 +175,6 @@ private:
 
         DynamicJsonDocument full(8192);
         if (deserializeJson(full, presetsJson)) {
-          // Reset if corrupt
           full.clear();
           full["active"] = nullptr;
           full.createNestedArray("slots");
@@ -190,7 +189,7 @@ private:
     );
 
     // DELETE a slot
-    server.on("/stair/api/preset", HTTP_DELETE,
+    server.on("/sc/preset", HTTP_DELETE,
       [this](AsyncWebServerRequest* req) {
         int slot = -1;
         if (req->hasParam("slot"))
@@ -211,7 +210,7 @@ private:
     );
 
     // POST trigger PIR — body: { "direction": "oben" | "unten" }
-    server.on("/stair/api/trigger", HTTP_POST,
+    server.on("/sc/trigger", HTTP_POST,
       [](AsyncWebServerRequest*) {},
       nullptr,
       [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
